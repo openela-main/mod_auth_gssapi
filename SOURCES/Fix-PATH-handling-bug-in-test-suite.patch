@@ -1,0 +1,28 @@
+From c26b1aafbb9679b19b630a46eeb35a9dee61a95f Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Tue, 13 Oct 2020 11:04:00 -0400
+Subject: [PATCH] Fix PATH handling bug in test suite
+
+virtualenv relies on its executable being ahead of the system ones.  For
+setting up the KDC, we don't have a preferencee - we just need the sbins
+to be available.
+
+Signed-off-by: Robbie Harwood <rharwood@redhat.com>
+(cherry picked from commit ae07252e356d8142ddd3987c9c3686ba7ee593de)
+---
+ tests/magtests.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/magtests.py b/tests/magtests.py
+index e04fa65..082c6e4 100755
+--- a/tests/magtests.py
++++ b/tests/magtests.py
+@@ -312,7 +312,7 @@ def setup_kdc(testdir, wrapenv):
+ 
+     kdcenv = wrapenv.copy()
+     kdcenv.update({
+-        'PATH': f'/sbin:/bin:/usr/sbin:/usr/bin:{wrapenv["PATH"]}',
++        'PATH': f'{wrapenv["PATH"]}:/sbin:/bin:/usr/sbin:/usr/bin',
+         'KRB5_CONFIG': krb5conf,
+         'KRB5_KDC_PROFILE': kdcconf,
+         'KRB5_TRACE': os.path.join(testdir, 'krbtrace.log'),

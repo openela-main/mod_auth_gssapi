@@ -1,0 +1,194 @@
+From 0dbf450a49784e2a750c667824e0e0249be575e4 Mon Sep 17 00:00:00 2001
+From: rpm-build <rpm-build>
+Date: Wed, 27 Apr 2022 18:18:22 +0200
+Subject: [PATCH] Add test for gss_localname
+
+Backport test for gss_localname implemented upstream by Simo
+---
+ tests/httpd.conf     | 13 ++++++++++
+ tests/localname.html |  1 +
+ tests/magtests.py    | 47 ++++++++++++++++++++++++++++++++-
+ tests/t_localname.py | 62 ++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 122 insertions(+), 1 deletion(-)
+ create mode 100644 tests/localname.html
+ create mode 100755 tests/t_localname.py
+
+diff --git a/tests/httpd.conf b/tests/httpd.conf
+index f76f2b671e02515e6d4effe09ab123dace90c023..b3777574d9f0547560f24eff992fc1018569b5cc 100644
+--- a/tests/httpd.conf
++++ b/tests/httpd.conf
+@@ -274,6 +274,19 @@ CoreDumpDirectory "{HTTPROOT}"
+   Require valid-user
+ </Location>
+ 
++<Location /gss_localname>
++  AuthType GSSAPI
++  AuthName "Login"
++  GssapiSSLonly Off
++  GssapiCredStore ccache:{HTTPROOT}/tmp/httpd_krb5_ccache
++  GssapiCredStore client_keytab:{HTTPROOT}/http.keytab
++  GssapiCredStore keytab:{HTTPROOT}/http.keytab
++  GssapiBasicAuth Off
++  GssapiAllowedMech krb5
++  GssapiLocalName On
++  Require valid-user
++</Location>
++
+ <VirtualHost *:{PROXYPORT}>
+   ProxyRequests On
+   ProxyVia On
+diff --git a/tests/localname.html b/tests/localname.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..abf7c507de1eb32b31b882502eed5f2bbcc5fbf3
+--- /dev/null
++++ b/tests/localname.html
+@@ -0,0 +1 @@
++<!--#echo var="REMOTE_USER" -->
+diff --git a/tests/magtests.py b/tests/magtests.py
+index d0f0a67f075c6b631926e9abd91a665973d90f4a..d100413b371e7ecf4e09d944b7ff6e9bec7e316f 100755
+--- a/tests/magtests.py
++++ b/tests/magtests.py
+@@ -58,12 +58,20 @@ def setup_wrappers(base):
+         f.write('%s %s\n' % (WRAP_IPADDR, WRAP_ALIASNAME))
+         f.write('%s %s\n' % (WRAP_IPADDR, WRAP_FAILNAME))
+ 
++    passwd_file = os.path.join(testdir, 'passwd')
++    with open(passwd_file, 'w+') as f:
++        f.write('root:x:0:0:root:/root:/bin/sh')
++        f.write('maguser:x:1:1:maguser:/maguser:/bin/sh')
++        f.write('maguser2:x:2:2:maguser2:/maguser2:/bin/sh')
++        f.write('maguser3:x:3:3:maguser3:/maguser3:/bin/sh')
++
+     wenv = {'LD_PRELOAD': 'libsocket_wrapper.so libnss_wrapper.so',
+             'SOCKET_WRAPPER_DIR': wrapdir,
+             'SOCKET_WRAPPER_DEFAULT_IFACE': '9',
+             'WRAP_PROXY_PORT': WRAP_PROXY_PORT,
+             'NSS_WRAPPER_HOSTNAME': WRAP_HOSTNAME,
+-            'NSS_WRAPPER_HOSTS': hosts_file}
++            'NSS_WRAPPER_HOSTS': hosts_file,
++            'NSS_WRAPPER_PASSWD': passwd_file}
+     return wenv
+ 
+ 
+@@ -744,6 +752,40 @@ def http_restart(testdir, so_dir, testenv):
+     return httpproc
+ 
+ 
++def test_gss_localname(testdir, testenv, logfile):
++    hdir = os.path.join(testdir, 'httpd', 'html', 'gss_localname')
++    os.mkdir(hdir)
++    shutil.copy('tests/localname.html', os.path.join(hdir, 'index.html'))
++    error_count = 0
++
++    # Make sure spnego is explicitly tested
++    spnego = subprocess.Popen(["tests/t_localname.py", "SPNEGO"],
++                              stdout=logfile, stderr=logfile,
++                              env=testenv, preexec_fn=os.setsid)
++    spnego.wait()
++    if spnego.returncode != 0:
++        sys.stderr.write('LOCALNAME(SPNEGO): FAILED\n')
++        error_count += 1
++    else:
++        sys.stderr.write('LOCALNAME(SPNEGO): SUCCESS\n')
++
++    # and bare krb5 (GS2-KRB5 is the name used by SASL for it)
++    krb5 = subprocess.Popen(["tests/t_localname.py", "GS2-KRB5"],
++                            stdout=logfile, stderr=logfile,
++                            env=testenv, preexec_fn=os.setsid)
++    krb5.wait()
++    if krb5.returncode != 0:
++        if krb5.returncode == 42:
++            sys.stderr.write('LOCALNAME(KRB5): SKIPPED\n')
++        else:
++            sys.stderr.write('LOCALNAME(KRB5): FAILED\n')
++            error_count += 1
++    else:
++        sys.stderr.write('LOCALNAME(KRB5): SUCCESS\n')
++
++    return error_count
++
++
+ if __name__ == '__main__':
+     args = parse_args()
+ 
+@@ -781,6 +823,9 @@ if __name__ == '__main__':
+ 
+         errs += test_bad_acceptor_name(testdir, testenv, logfile)
+ 
++        testenv['MAG_REMOTE_USER'] = USR_NAME
++        errs += test_gss_localname(testdir, testenv, logfile)
++
+         rpm_path = "/usr/lib64/krb5/plugins/preauth/pkinit.so"
+         deb_path = "/usr/lib/x86_64-linux-gnu/krb5/plugins/preauth/pkinit.so"
+         if os.path.exists(rpm_path) or os.path.exists(deb_path):
+diff --git a/tests/t_localname.py b/tests/t_localname.py
+new file mode 100755
+index 0000000000000000000000000000000000000000..e990762c42aa9b370ac71292b5019fc63622c240
+--- /dev/null
++++ b/tests/t_localname.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python3
++# Copyright (C) 2020 - mod_auth_gssapi contributors, see COPYING for license.
++
++import os
++import subprocess
++import sys
++
++import gssapi
++
++import requests
++
++from requests_gssapi import HTTPSPNEGOAuth
++
++
++def use_requests(auth):
++    sess = requests.Session()
++    url = 'http://%s/gss_localname/' % os.environ['NSS_WRAPPER_HOSTNAME']
++
++    r = sess.get(url, auth=auth)
++    if r.status_code != 200:
++        raise ValueError('Localname failed')
++
++    if r.text.rstrip() != os.environ['MAG_REMOTE_USER']:
++        raise ValueError('Localname, REMOTE_USER check failed')
++
++
++def use_curl():
++    url = 'http://%s/gss_localname/' % os.environ['NSS_WRAPPER_HOSTNAME']
++    curl = subprocess.Popen(["curl", "--negotiate", "-u:", url],
++                            stdout=subprocess.PIPE)
++    curl.wait()
++    if curl.returncode != 0:
++        raise ValueError('Localname failed')
++
++    line = curl.stdout.read().strip(b' \t\n\r').decode('utf-8')
++    if line != os.environ['MAG_REMOTE_USER']:
++        raise ValueError('Localname, REMOTE_USER check failed (%s != %s)' % (
++                         line, os.environ['MAG_REMOTE_USER']))
++
++
++if __name__ == '__main__':
++    mech_name = None
++    if len(sys.argv) > 1:
++        mech_name = sys.argv[1]
++
++    mech = None
++    if mech_name is not None:
++        mech = gssapi.mechs.Mechanism.from_sasl_name(mech_name)
++
++    try:
++        auth = HTTPSPNEGOAuth(mech=mech)
++        use_requests(auth)
++    except TypeError:
++        # odler version of requests that does not support mechs
++        if mech_name == 'SPNEGO':
++            use_curl()
++        elif mech_name == 'GS2-KRB5':
++            # older request versions use krb5 as the mech by default
++            auth = HTTPSPNEGOAuth()
++            use_requests(auth)
++        else:
++            sys.exit(42)  # SKIP
+-- 
+2.35.1
+

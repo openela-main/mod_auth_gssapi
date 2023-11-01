@@ -1,0 +1,262 @@
+From 46caec4def9fd8df21e560db065b755e1d87354d Mon Sep 17 00:00:00 2001
+From: rpm-build <rpm-build>
+Date: Fri, 6 May 2022 22:54:45 +0200
+Subject: [PATCH 1/2] Add-ability-to-expose-the-used-mechanism.patch
+
+---
+ README                | 15 +++++++++++++++
+ src/environ.c         | 39 +++++++++++++++++++++++++++++++++++++++
+ src/environ.h         |  2 ++
+ src/mod_auth_gssapi.c |  7 +++++++
+ src/mod_auth_gssapi.h |  1 +
+ tests/Makefile.am     |  4 +++-
+ tests/httpd.conf      | 15 +++++++++++++++
+ tests/magtests.py     | 18 ++++++++++++++++++
+ tests/mech.html       |  1 +
+ tests/t_mech_name.py  | 19 +++++++++++++++++++
+ 10 files changed, 120 insertions(+), 1 deletion(-)
+ create mode 100644 tests/mech.html
+ create mode 100755 tests/t_mech_name.py
+
+diff --git a/README b/README
+index 654a8918cc1cd078d84b8e571596444e262e83af..bbf2657d47c9b111e20fdc2b76fde8799c76e3cd 100644
+--- a/README
++++ b/README
+@@ -109,6 +109,7 @@ Configuration Directives
+ [GssapiNameAttributes](#gssapinameattributes)<br>
+ [GssapiNegotiateOnce](#gssapinegotiateonce)<br>
+ [GssapiPublishErrors](#gssapipublisherrors)<br>
++[GssapiPublishMech](#gssapipublishmech)<br>
+ [GssapiRequiredNameAttributes](#gssapirequirednameattributes)<br>
+ [GssapiSessionKey](#gssapisessionkey)<br>
+ [GssapiSignalPersistentAuth](#gssapisignalpersistentauth)<br>
+@@ -527,3 +528,17 @@ Note: the value is specified in seconds.
+ Sets ticket/session validity to 10 hours.
+ 
+ 
++### GssapiPublishMech
++
++This option is used to publish the mech used for authentication as an
++Environment variable named GSS_MECH.
++
++It will return a string of the form 'Authtype/Mechname'.
++Authtype represents the type of auth performed by the module. Possible values
++are 'Basic', 'Negotiate', 'NTLM', 'Impersonate'.
++Mechname is the name of the mechanism as reported by GSSAPI or the OID of the
++mechanism if a name is not available. In case of errors the 'Unavailable'
++string may also be returned for either Authtype or Mechname.
++
++- **Enable with:** GssapiPublishMech On
++- **Default:** GssapiPublishMech Off
+\ No newline at end of file
+diff --git a/src/environ.c b/src/environ.c
+index 7ee56a1ba434d5c1041968fb3f64191340cb0ea7..71a8564284cafa62c4cbeaf7ab8484a48c064e66 100644
+--- a/src/environ.c
++++ b/src/environ.c
+@@ -498,3 +498,42 @@ void mag_publish_error(request_rec *req, uint32_t maj, uint32_t min,
+     if (mag_err)
+         apr_table_set(req->subprocess_env, "MAG_ERROR", mag_err);
+ }
++
++
++void mag_publish_mech(request_rec *req, struct mag_conn *mc,
++                      const char *auth_type, gss_OID mech_type)
++{
++    gss_buffer_desc sasl_mech_name = GSS_C_EMPTY_BUFFER;
++    gss_buffer_desc mech_name = GSS_C_EMPTY_BUFFER;
++    gss_buffer_desc mech_description = GSS_C_EMPTY_BUFFER;
++    char *mechdata;
++    uint32_t maj, min;
++
++    maj = gss_inquire_saslname_for_mech(&min, mech_type, &sasl_mech_name,
++                                        &mech_name, &mech_description);
++    if (maj != GSS_S_COMPLETE) {
++        /* something failed, let's try to get a string OID */
++        /* and if that fails there is nothing we can do */
++        maj = gss_oid_to_str(&min, mech_type, &mech_name);
++        if (maj != GSS_S_COMPLETE) {
++            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, req,
++                          "Failed to source mechanism name or OID");
++            mech_name.value = strdup("Unavailable");
++            mech_name.length = strlen(mech_name.value);
++        }
++    }
++
++    mechdata = apr_psprintf(req->pool, "%s/%.*s", auth_type,
++                            (int)mech_name.length,
++                            (char *)mech_name.value);
++
++    apr_table_set(mc->env, "GSS_MECH", mechdata);
++
++    /* also log at info level */
++    ap_log_rerror(APLOG_MARK, APLOG_INFO|APLOG_NOERRNO, 0, req,
++                  "User %s authenticated with %s", mc->gss_name, mechdata);
++
++    (void)gss_release_buffer(&min, &sasl_mech_name);
++    (void)gss_release_buffer(&min, &mech_name);
++    (void)gss_release_buffer(&min, &mech_description);
++}
+diff --git a/src/environ.h b/src/environ.h
+index 40bca9877f600246d19a3bf4be370310636ce6c7..b0813da6508df7c5594b51cada7712dc44393e44 100644
+--- a/src/environ.h
++++ b/src/environ.h
+@@ -18,3 +18,5 @@ void mag_publish_error(request_rec *req, uint32_t maj, uint32_t min,
+                        const char *gss_err, const char *mag_err);
+ void mag_set_req_attr_fail(request_rec *req, struct mag_config *cfg,
+                            struct mag_conn *mc);
++void mag_publish_mech(request_rec *req, struct mag_conn *mc,
++                      const char *auth_type, gss_OID mech_type);
+diff --git a/src/mod_auth_gssapi.c b/src/mod_auth_gssapi.c
+index c91aa60707ba9b237a84f95670d483f1a7eab86b..93c43308585cf140297de82e118a367f69d25a92 100644
+--- a/src/mod_auth_gssapi.c
++++ b/src/mod_auth_gssapi.c
+@@ -1289,6 +1289,10 @@ static int mag_complete(struct mag_req_cfg *req_cfg, struct mag_conn *mc,
+         mc->user_name = apr_pstrdup(mc->pool, mc->gss_name);
+     }
+ 
++    if (cfg->pubmech) {
++        mag_publish_mech(req, mc, mag_str_auth_type(mc->auth_type), mech_type);
++    }
++
+     mc->established = true;
+     if (req_cfg->use_sessions) {
+         mag_attempt_session(req_cfg, mc);
+@@ -1894,6 +1898,9 @@ static const command_rec mag_commands[] = {
+     AP_INIT_FLAG("GssapiPublishErrors", ap_set_flag_slot,
+                  (void *)APR_OFFSETOF(struct mag_config, enverrs), OR_AUTHCFG,
+                  "Publish GSSAPI Errors in Envionment Variables"),
++    AP_INIT_FLAG("GssapiPublishMech", ap_set_flag_slot,
++                 (void *)APR_OFFSETOF(struct mag_config, pubmech), OR_AUTHCFG,
++                 "Publish GSSAPI Mech Name in Envionment Variables"),
+     AP_INIT_RAW_ARGS("GssapiAcceptorName", mag_acceptor_name, NULL, OR_AUTHCFG,
+                      "Name of the acceptor credentials."),
+     AP_INIT_TAKE1("GssapiBasicTicketTimeout", mag_basic_timeout, NULL,
+diff --git a/src/mod_auth_gssapi.h b/src/mod_auth_gssapi.h
+index 2312ab57f4b2e0bd50f191018b081a3ecb86f15a..8ab3bdc57be793cc493176c02910219e905900e9 100644
+--- a/src/mod_auth_gssapi.h
++++ b/src/mod_auth_gssapi.h
+@@ -91,6 +91,7 @@ struct mag_config {
+     struct mag_name_attributes *name_attributes;
+     const char *required_na_expr;
+     int enverrs;
++    int pubmech;
+     gss_name_t acceptor_name;
+     bool acceptor_name_from_req;
+     uint32_t basic_timeout;
+diff --git a/tests/Makefile.am b/tests/Makefile.am
+index c830e951d04316e4cbc76fa3b5961baedb516ec6..2ddb46ea30e6ebf9ff0b30278c609178d02c1efc 100644
+--- a/tests/Makefile.am
++++ b/tests/Makefile.am
+@@ -6,14 +6,16 @@ EXTRA_DIST = \
+ 	index.html \
+ 	localname.html \
+ 	magtests.py \
++        mech.html \
+ 	t_bad_acceptor_name.py \
+ 	t_basic_k5_fail_second.py \
+ 	t_basic_k5.py \
+ 	t_basic_k5_two_users.py \
+ 	t_basic_proxy.py \
+ 	t_basic_timeout.py \
+-	t_localname.py \
+ 	t_hostname_acceptor.py \
++        t_localname.py \
++        t_mech_name.py \
+ 	t_nonego.py \
+ 	t_required_name_attr.py \
+ 	t_spnego_negotiate_once.py \
+diff --git a/tests/httpd.conf b/tests/httpd.conf
+index b3777574d9f0547560f24eff992fc1018569b5cc..775294b7d600e82c3955316a2d5b667c8b3c5581 100644
+--- a/tests/httpd.conf
++++ b/tests/httpd.conf
+@@ -331,3 +331,18 @@ CoreDumpDirectory "{HTTPROOT}"
+   GssapiSessionKey file:{HTTPROOT}/session.key
+   Require valid-user
+ </Location>
++
++<Location /mech_name>
++  Options +Includes
++  AddOutputFilter INCLUDES .html
++  AuthType GSSAPI
++  AuthName "Password Login"
++  GssapiSSLonly Off
++  GssapiCredStore ccache:{HTTPROOT}/tmp/httpd_krb5_ccache
++  GssapiCredStore client_keytab:{HTTPROOT}/http.keytab
++  GssapiCredStore keytab:{HTTPROOT}/http.keytab
++  GssapiBasicAuth On
++  GssapiBasicAuthMech krb5
++  GssapiPublishMech On
++  Require valid-user
++</Location>
+\ No newline at end of file
+diff --git a/tests/magtests.py b/tests/magtests.py
+index d100413b371e7ecf4e09d944b7ff6e9bec7e316f..9aba68f826a37a890bfefb62665697eef7d07dfa 100755
+--- a/tests/magtests.py
++++ b/tests/magtests.py
+@@ -786,6 +786,22 @@ def test_gss_localname(testdir, testenv, logfile):
+     return error_count
+ 
+ 
++def test_mech_name(testdir, testenv, logfile):
++    basicdir = os.path.join(testdir, 'httpd', 'html', 'mech_name')
++    os.mkdir(basicdir)
++    shutil.copy('tests/mech.html', basicdir)
++
++    mname = subprocess.Popen(["tests/t_mech_name.py"],
++                             stdout=logfile, stderr=logfile,
++                             env=testenv, preexec_fn=os.setsid)
++    mname.wait()
++    if mname.returncode != 0:
++        sys.stderr.write('MECH-NAME: FAILED\n')
++        return 1
++    sys.stderr.write('MECH-NAME: SUCCESS\n')
++    return 0
++
++
+ if __name__ == '__main__':
+     args = parse_args()
+ 
+@@ -847,6 +863,8 @@ if __name__ == '__main__':
+ 
+         errs += test_no_negotiate(testdir, testenv, logfile)
+ 
++        errs += test_mech_name(testdir, testenv, logfile)
++
+         # After this point we need to speed up httpd to test creds timeout
+         try:
+             fakeenv = faketime_setup(kdcenv)
+diff --git a/tests/mech.html b/tests/mech.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..bb7b3cd5278f055e278a7dfde73c15aa400a6a17
+--- /dev/null
++++ b/tests/mech.html
+@@ -0,0 +1 @@
++<!--#echo var="GSS_MECH" -->
+diff --git a/tests/t_mech_name.py b/tests/t_mech_name.py
+new file mode 100755
+index 0000000000000000000000000000000000000000..69f451f2bbe58a16f61418f96eca26e7994bcb8a
+--- /dev/null
++++ b/tests/t_mech_name.py
+@@ -0,0 +1,19 @@
++#!/usr/bin/env python3
++# Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
++
++import os
++import requests
++from requests.auth import HTTPBasicAuth
++
++
++if __name__ == '__main__':
++    url = 'http://%s/mech_name/mech.html' % os.environ['NSS_WRAPPER_HOSTNAME']
++    r = requests.get(url, auth=HTTPBasicAuth(os.environ['MAG_USER_NAME'],
++                                             os.environ['MAG_USER_PASSWORD']))
++    if r.status_code != 200:
++        raise ValueError('Basic Auth Failed')
++
++    if r.text.rstrip() != 'Basic/krb5':
++        raise ValueError(
++            'GSS_MECH check failed, expected Basic/krb5, got "%s"' %
++            r.text.rstrip())
+-- 
+2.35.3
+

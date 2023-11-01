@@ -1,0 +1,198 @@
+From eeca34dc64804a4b771800f54f0e0647ce88bdd4 Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Tue, 13 Oct 2020 10:33:39 -0400
+Subject: [PATCH] Move to python3 by default
+
+When moving 2 -> 3, python elected to keep "python" as the name of the
+python2 interpreter.  As a result, python3-only machines have no
+/usr/bin/python.  Since python2 is EOL, it should be safe to make our
+scripting default to python3.
+
+Signed-off-by: Robbie Harwood <rharwood@redhat.com>
+(cherry picked from commit 840863f89ed4809602f1ca7b8ad650c0b979d20e)
+[rharwood@redhat.com: tests that don't exist yet, README prg/prk,
+contrib isn't packaged in dist tarballs]
+---
+ README                           | 4 ++--
+ tests/magtests.py                | 2 +-
+ tests/t_bad_acceptor_name.py     | 2 +-
+ tests/t_basic_k5.py              | 2 +-
+ tests/t_basic_k5_fail_second.py  | 2 +-
+ tests/t_basic_k5_two_users.py    | 2 +-
+ tests/t_basic_proxy.py           | 2 +-
+ tests/t_basic_timeout.py         | 2 +-
+ tests/t_hostname_acceptor.py     | 2 +-
+ tests/t_nonego.py                | 2 +-
+ tests/t_required_name_attr.py    | 2 +-
+ tests/t_spnego.py                | 2 +-
+ tests/t_spnego_negotiate_once.py | 2 +-
+ tests/t_spnego_no_auth.py        | 2 +-
+ tests/t_spnego_proxy.py          | 2 +-
+ tests/t_spnego_rewrite.py        | 2 +-
+ 16 files changed, 17 insertions(+), 17 deletions(-)
+
+diff --git a/README b/README
+index 5eac94f..654a891 100644
+--- a/README
++++ b/README
+@@ -26,8 +26,8 @@ To run tests, you also need:
+ 
+ * The Kerberos 5 Key-Distribution-Center (`krb5-kdc` package on Debian,
+   `krb5-server` on Fedora)
+-* Packages `mod_session`, `krb5-workstation`, `python-requests-kerberos`,
+-  and `python-gssapi` on Fedora
++* Packages `mod_session`, `krb5-workstation`, `python3-requests-gssapi`,
++  and `python3-gssapi` on Fedora
+ * Some tests require `krb5-pkinit` package on fedora and krb5 >= 1.15.
+ * [nss_wrapper](https://cwrap.org/nss_wrapper.html), packaged in Fedora
+ * [socket_wrapper](https://cwrap.org/socket_wrapper.html), packaged in Fedora
+diff --git a/tests/magtests.py b/tests/magtests.py
+index 082c6e4..d0f0a67 100755
+--- a/tests/magtests.py
++++ b/tests/magtests.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import argparse
+diff --git a/tests/t_bad_acceptor_name.py b/tests/t_bad_acceptor_name.py
+index 41ee48b..6cee588 100755
+--- a/tests/t_bad_acceptor_name.py
++++ b/tests/t_bad_acceptor_name.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_basic_k5.py b/tests/t_basic_k5.py
+index e499eac..4b24801 100755
+--- a/tests/t_basic_k5.py
++++ b/tests/t_basic_k5.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_basic_k5_fail_second.py b/tests/t_basic_k5_fail_second.py
+index 273e9a5..7e53218 100755
+--- a/tests/t_basic_k5_fail_second.py
++++ b/tests/t_basic_k5_fail_second.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_basic_k5_two_users.py b/tests/t_basic_k5_two_users.py
+index 41ffe98..3d27e9e 100755
+--- a/tests/t_basic_k5_two_users.py
++++ b/tests/t_basic_k5_two_users.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_basic_proxy.py b/tests/t_basic_proxy.py
+index 5370314..347b802 100755
+--- a/tests/t_basic_proxy.py
++++ b/tests/t_basic_proxy.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_basic_timeout.py b/tests/t_basic_timeout.py
+index 983dfd2..007ff97 100755
+--- a/tests/t_basic_timeout.py
++++ b/tests/t_basic_timeout.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2020 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_hostname_acceptor.py b/tests/t_hostname_acceptor.py
+index 6d59e85..bb85700 100755
+--- a/tests/t_hostname_acceptor.py
++++ b/tests/t_hostname_acceptor.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2017 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import sys
+diff --git a/tests/t_nonego.py b/tests/t_nonego.py
+index 430001a..4e77f80 100755
+--- a/tests/t_nonego.py
++++ b/tests/t_nonego.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_required_name_attr.py b/tests/t_required_name_attr.py
+index bbfdc19..a67446b 100755
+--- a/tests/t_required_name_attr.py
++++ b/tests/t_required_name_attr.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_spnego.py b/tests/t_spnego.py
+index e7003a6..04190a9 100755
+--- a/tests/t_spnego.py
++++ b/tests/t_spnego.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_spnego_negotiate_once.py b/tests/t_spnego_negotiate_once.py
+index e8eb601..3d8e048 100755
+--- a/tests/t_spnego_negotiate_once.py
++++ b/tests/t_spnego_negotiate_once.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_spnego_no_auth.py b/tests/t_spnego_no_auth.py
+index abcccdf..c564388 100755
+--- a/tests/t_spnego_no_auth.py
++++ b/tests/t_spnego_no_auth.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_spnego_proxy.py b/tests/t_spnego_proxy.py
+index c47558b..b917191 100755
+--- a/tests/t_spnego_proxy.py
++++ b/tests/t_spnego_proxy.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os
+diff --git a/tests/t_spnego_rewrite.py b/tests/t_spnego_rewrite.py
+index 2ed1d3e..202d76a 100755
+--- a/tests/t_spnego_rewrite.py
++++ b/tests/t_spnego_rewrite.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ # Copyright (C) 2015 - mod_auth_gssapi contributors, see COPYING for license.
+ 
+ import os

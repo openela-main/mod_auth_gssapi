@@ -1,0 +1,35 @@
+From 27f7ca84a5a05f65e6d113a8a6698c7f40fd66c6 Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Fri, 15 May 2020 15:51:19 -0400
+Subject: [PATCH] [tests] Support Debian's libfaketime
+
+Signed-off-by: Robbie Harwood <rharwood@redhat.com>
+(cherry picked from commit 367120a1c02641680a8f51bd59cc96d56cc9804b)
+---
+ tests/magtests.py | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/tests/magtests.py b/tests/magtests.py
+index da1cca7..6c38a8f 100755
+--- a/tests/magtests.py
++++ b/tests/magtests.py
+@@ -692,9 +692,16 @@ def test_hostname_acceptor(testdir, testenv, logfile):
+ 
+ 
+ def faketime_setup(testenv):
+-    libfaketime = '/usr/lib64/faketime/libfaketime.so.1'
+-    # optional faketime
+-    if not os.path.isfile(libfaketime):
++    # Wanted: an architecture- and distro-agnostic way to do this.
++    # libfaketime is installed in a place where ld.so won't pick it up by
++    # default, so...
++    paths = ['/usr/lib64/faketime/libfaketime.so.1',
++             '/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1']
++    libfaketime = None
++    for p in paths:
++        if os.path.isfile(p):
++            libfaketime = p
++    if not libfaketime:
+         raise NotImplementedError
+ 
+     # spedup x100
