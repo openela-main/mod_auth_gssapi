@@ -1,0 +1,372 @@
+From b4ddd657ccc7793df9378209433f0142195a94d1 Mon Sep 17 00:00:00 2001
+From: Simo Sorce <simo@redhat.com>
+Date: Thu, 14 May 2020 09:19:37 -0400
+Subject: [PATCH] Add option to control timeout for Basic Auth
+
+Adds new option and tests.
+Adds optional dependency on libfaketime to test this feature.
+
+Fixes: #210
+Signed-off-by: Simo Sorce <simo@redhat.com>
+Merges: #217
+Reviewed-by: Robbie Harwood <rharwood@redhat.com>
+(cherry picked from commit 09df7584b4abadbfea411adafdcc825da5b720d3)
+[rharwood@redhat.com: git got confused by not having localname test]
+---
+ README                   | 24 +++++++++++++
+ src/mod_auth_gssapi.c    | 27 +++++++++++---
+ src/mod_auth_gssapi.h    |  1 +
+ tests/Makefile.am        |  1 +
+ tests/httpd.conf         | 32 ++++++++++++++++-
+ tests/magtests.py        | 76 ++++++++++++++++++++++++++++++++++++++++
+ tests/t_basic_timeout.py | 34 ++++++++++++++++++
+ 7 files changed, 190 insertions(+), 5 deletions(-)
+ create mode 100755 tests/t_basic_timeout.py
+
+diff --git a/README b/README
+index 700b57e..5eac94f 100644
+--- a/README
++++ b/README
+@@ -97,6 +97,7 @@ Configuration Directives
+ [GssapiAllowedMech](#gssapiallowedmech)<br>
+ [GssapiBasicAuth](#gssapibasicauth)<br>
+ [GssapiBasicAuthMech](#gssapibasicauthmech)<br>
++[GssapiBasicTicketTimeout](#gssapibasicticketvalidity)<br>
+ [GssapiConnectionBound](#gssapiconnectionbound)<br>
+ [GssapiCredStore](#gssapicredstore)<br>
+ [GssapiDelegCcacheDir](#gssapidelegccachedir)<br>
+@@ -503,3 +504,26 @@ Note: The GSS_C_NT_HOSTBASED_SERVICE format is used for names (see example).
+     GssapiAcceptorName HTTP@www.example.com
+ 
+ 
++### GssapiBasicTicketTimeout
++
++This option controls the ticket validity time requested for the user TGT by the
++Basic Auth method.
++
++Normally basic auth is repeated by the browser on each request so a short
++validity period is used to reduce the scope of the ticket as it will be
++replaced quickly.
++However in cases where the authentication page is separate and the session
++is used by other pages the validity can be changed to arbitrary duration.
++
++Note: the validity of a ticket is still capped by KDC configuration.
++
++Note: the value is specified in seconds.
++
++- **Default:** GssapiBasicTicketTimeout 300
++
++#### Example
++    GssapiBasicTicketTimeout 36000
++
++Sets ticket/session validity to 10 hours.
++
++
+diff --git a/src/mod_auth_gssapi.c b/src/mod_auth_gssapi.c
+index 9e42ef4..b099973 100644
+--- a/src/mod_auth_gssapi.c
++++ b/src/mod_auth_gssapi.c
+@@ -1,4 +1,5 @@
+-/* Copyright (C) 2014, 2016 mod_auth_gssapi contributors - See COPYING for (C) terms */
++/* Copyright (C) 2014, 2016, 2020 mod_auth_gssapi contributors
++ * See COPYING for (C) terms */
+ 
+ #include "mod_auth_gssapi.h"
+ #include "mag_parse.h"
+@@ -600,7 +601,7 @@ static int mag_auth_basic(struct mag_req_cfg *req_cfg, struct mag_conn *mc,
+     }
+ 
+     maj = gss_acquire_cred_with_password(&min, user, &ba_pwd,
+-                                         GSS_C_INDEFINITE,
++                                         cfg->basic_timeout,
+                                          allowed_mechs,
+                                          GSS_C_INITIATE,
+                                          &user_cred, &actual_mechs, NULL);
+@@ -619,8 +620,8 @@ static int mag_auth_basic(struct mag_req_cfg *req_cfg, struct mag_conn *mc,
+ 
+     for (int i = 0; i < actual_mechs->count; i++) {
+         maj = mag_context_loop(&min, req, cfg, user_cred, server_cred,
+-                               &actual_mechs->elements[i], 300, &client,
+-                               &vtime, &delegated_cred);
++                               &actual_mechs->elements[i], cfg->basic_timeout,
++                               &client, &vtime, &delegated_cred);
+         if (maj == GSS_S_COMPLETE) {
+             ret = mag_complete(req_cfg, mc, client, &actual_mechs->elements[i],
+                                vtime, delegated_cred);
+@@ -1299,6 +1300,7 @@ static void *mag_create_dir_config(apr_pool_t *p, char *dir)
+ #ifdef HAVE_CRED_STORE
+     cfg->ccname_envvar = "KRB5CCNAME";
+ #endif
++    cfg->basic_timeout = 300;
+ 
+     return cfg;
+ }
+@@ -1789,6 +1791,21 @@ static const char *mag_acceptor_name(cmd_parms *parms, void *mconfig,
+     return NULL;
+ }
+ 
++static const char *mag_basic_timeout(cmd_parms *parms, void *mconfig,
++                                     const char *w)
++{
++    struct mag_config *cfg = (struct mag_config *)mconfig;
++    unsigned long int value;
++
++    value = strtoul(w, NULL, 10);
++    if (value >= UINT32_MAX) {
++        cfg->basic_timeout = GSS_C_INDEFINITE;
++        return NULL;
++    }
++    cfg->basic_timeout = value;
++    return NULL;
++}
++
+ static void *mag_create_server_config(apr_pool_t *p, server_rec *s)
+ {
+     struct mag_server_config *scfg;
+@@ -1865,6 +1882,8 @@ static const command_rec mag_commands[] = {
+                  "Publish GSSAPI Errors in Envionment Variables"),
+     AP_INIT_RAW_ARGS("GssapiAcceptorName", mag_acceptor_name, NULL, OR_AUTHCFG,
+                      "Name of the acceptor credentials."),
++    AP_INIT_TAKE1("GssapiBasicTicketTimeout", mag_basic_timeout, NULL,
++                  OR_AUTHCFG, "Ticket Validity Timeout with Basic Auth."),
+     { NULL }
+ };
+ 
+diff --git a/src/mod_auth_gssapi.h b/src/mod_auth_gssapi.h
+index 8c0b972..2312ab5 100644
+--- a/src/mod_auth_gssapi.h
++++ b/src/mod_auth_gssapi.h
+@@ -93,6 +93,7 @@ struct mag_config {
+     int enverrs;
+     gss_name_t acceptor_name;
+     bool acceptor_name_from_req;
++    uint32_t basic_timeout;
+ };
+ 
+ struct mag_server_config {
+diff --git a/tests/Makefile.am b/tests/Makefile.am
+index 16d87e9..c830e95 100644
+--- a/tests/Makefile.am
++++ b/tests/Makefile.am
+@@ -11,6 +11,7 @@ EXTRA_DIST = \
+ 	t_basic_k5.py \
+ 	t_basic_k5_two_users.py \
+ 	t_basic_proxy.py \
++	t_basic_timeout.py \
+ 	t_localname.py \
+ 	t_hostname_acceptor.py \
+ 	t_nonego.py \
+diff --git a/tests/httpd.conf b/tests/httpd.conf
+index 8c91e1c..f76f2b6 100644
+--- a/tests/httpd.conf
++++ b/tests/httpd.conf
+@@ -111,7 +111,7 @@ DocumentRoot "{HTTPROOT}/html"
+ PidFile "{HTTPROOT}/logs/httpd.pid"
+ 
+ <IfModule log_config_module>
+-LogFormat "%h %l %u %t \"%r\" %>s %b \"%{{Referer}}i\" \"%{{User-Agent}}i\"" combined
++LogFormat "%h %l %u %t \"%r\" %>s %b \"%{{Referer}}i\" \"%{{User-Agent}}i\" \"%{{Cookie}}i\"" combined
+ CustomLog "logs/access_log" combined
+ </IfModule>
+ 
+@@ -288,3 +288,33 @@ CoreDumpDirectory "{HTTPROOT}"
+     Require valid-user
+   </Proxy>
+ </VirtualHost>
++
++<Location /basic_auth_timeout/auth>
++  Options +Includes
++  AddOutputFilter INCLUDES .html
++  AuthType GSSAPI
++  AuthName "Password Login"
++  GssapiSSLonly Off
++  GssapiUseSessions On
++  Session On
++  SessionCookieName gssapi_session path=/basic_auth_timeout;httponly
++  GssapiSessionKey file:{HTTPROOT}/session.key
++  GssapiCredStore keytab:{HTTPROOT}/http.keytab
++  GssapiBasicAuth On
++  GssapiBasicAuthMech krb5
++  GssapiBasicTicketTimeout 400
++  GssapiDelegCcacheDir {HTTPROOT}
++  Require valid-user
++</Location>
++<Location /basic_auth_timeout/session>
++  Options +Includes
++  AddOutputFilter INCLUDES .html
++  AuthType GSSAPI
++  AuthName "Session Login"
++  GssapiSSLonly Off
++  GssapiUseSessions On
++  Session On
++  SessionCookieName gssapi_session path=/basic_auth_timeout;httponly
++  GssapiSessionKey file:{HTTPROOT}/session.key
++  Require valid-user
++</Location>
+diff --git a/tests/magtests.py b/tests/magtests.py
+index a4842a0..da1cca7 100755
+--- a/tests/magtests.py
++++ b/tests/magtests.py
+@@ -3,11 +3,13 @@
+ 
+ import argparse
+ import os
++import os.path
+ import random
+ import shutil
+ import signal
+ import subprocess
+ import sys
++import time
+ import traceback
+ 
+ # check that we can import requests (for use in test scripts)
+@@ -341,6 +343,7 @@ USR_PWD_2 = "magpwd2"
+ USR_NAME_3 = "maguser3"
+ SVC_KTNAME = "httpd/http.keytab"
+ KEY_TYPE = "aes256-cts-hmac-sha1-96:normal"
++USR_NAME_4 = "timeoutusr"
+ 
+ 
+ def setup_keys(tesdir, env):
+@@ -361,6 +364,9 @@ def setup_keys(tesdir, env):
+     cmd = "addprinc -pw %s -e %s %s" % (USR_PWD_2, KEY_TYPE, USR_NAME_2)
+     kadmin_local(cmd, env, logfile)
+ 
++    cmd = "addprinc -pw %s -e %s %s" % (USR_PWD, KEY_TYPE, USR_NAME_4)
++    kadmin_local(cmd, env, logfile)
++
+     # alias for multinamed hosts testing
+     alias_name = "HTTP/%s" % WRAP_ALIASNAME
+     cmd = "addprinc -randkey -e %s %s" % (KEY_TYPE, alias_name)
+@@ -600,6 +606,30 @@ def test_basic_auth_krb5(testdir, testenv, logfile):
+     return error_count
+ 
+ 
++def test_basic_auth_timeout(testdir, testenv, logfile):
++    httpdir = os.path.join(testdir, 'httpd')
++    timeoutdir = os.path.join(httpdir, 'html', 'basic_auth_timeout')
++    os.mkdir(timeoutdir)
++    authdir = os.path.join(timeoutdir, 'auth')
++    os.mkdir(authdir)
++    sessdir = os.path.join(timeoutdir, 'session')
++    os.mkdir(sessdir)
++    shutil.copy('tests/index.html', os.path.join(authdir))
++    shutil.copy('tests/index.html', os.path.join(sessdir))
++
++    basictout = subprocess.Popen(["tests/t_basic_timeout.py"],
++                                 stdout=logfile, stderr=logfile,
++                                 env=testenv, preexec_fn=os.setsid)
++    basictout.wait()
++    if basictout.returncode != 0:
++        sys.stderr.write('BASIC Timeout Behavior: FAILED\n')
++        return 1
++    else:
++        sys.stderr.write('BASIC Timeout Behavior: SUCCESS\n')
++
++    return 0
++
++
+ def test_bad_acceptor_name(testdir, testenv, logfile):
+     bandir = os.path.join(testdir, 'httpd', 'html', 'bad_acceptor_name')
+     os.mkdir(bandir)
+@@ -661,6 +691,33 @@ def test_hostname_acceptor(testdir, testenv, logfile):
+     return 0
+ 
+ 
++def faketime_setup(testenv):
++    libfaketime = '/usr/lib64/faketime/libfaketime.so.1'
++    # optional faketime
++    if not os.path.isfile(libfaketime):
++        raise NotImplementedError
++
++    # spedup x100
++    fakeenv = {'FAKETIME': '+0 x100'}
++    fakeenv.update(testenv)
++    fakeenv['LD_PRELOAD'] = ' '.join((testenv['LD_PRELOAD'], libfaketime))
++    return fakeenv
++
++
++def http_restart(testdir, so_dir, testenv):
++
++    httpenv = {'PATH': '/sbin:/bin:/usr/sbin:/usr/bin',
++               'MALLOC_CHECK_': '3',
++               'MALLOC_PERTURB_': str(random.randint(0, 32767) % 255 + 1)}
++    httpenv.update(testenv)
++
++    httpd = "httpd" if os.path.exists("/etc/httpd/modules") else "apache2"
++    config = os.path.join(testdir, 'httpd', 'httpd.conf')
++    httpproc = subprocess.Popen([httpd, '-DFOREGROUND', '-f', config],
++                                env=httpenv, preexec_fn=os.setsid)
++    return httpproc
++
++
+ if __name__ == '__main__':
+     args = parse_args()
+ 
+@@ -722,6 +779,25 @@ if __name__ == '__main__':
+         errs += test_basic_auth_krb5(testdir, testenv, logfile)
+ 
+         errs += test_no_negotiate(testdir, testenv, logfile)
++
++        # After this point we need to speed up httpd to test creds timeout
++        try:
++            fakeenv = faketime_setup(kdcenv)
++            timeenv = {'TIMEOUT_USER': USR_NAME_4,
++                       'MAG_USER_PASSWORD': USR_PWD}
++            timeenv.update(fakeenv)
++            curporc = httpproc
++            pid = processes['HTTPD(%d)' % httpproc.pid].pid
++            os.killpg(pid, signal.SIGTERM)
++            time.sleep(1)
++            del processes['HTTPD(%d)' % httpproc.pid]
++            httpproc = http_restart(testdir, so_dir, timeenv)
++            processes['HTTPD(%d)' % httpproc.pid] = httpproc
++
++            errs += test_basic_auth_timeout(testdir, timeenv, logfile)
++        except NotImplementedError:
++            sys.stderr.write('BASIC Timeout Behavior: SKIPPED\n')
++
+     except Exception:
+         traceback.print_exc()
+     finally:
+diff --git a/tests/t_basic_timeout.py b/tests/t_basic_timeout.py
+new file mode 100755
+index 0000000..983dfd2
+--- /dev/null
++++ b/tests/t_basic_timeout.py
+@@ -0,0 +1,34 @@
++#!/usr/bin/env python
++# Copyright (C) 2020 - mod_auth_gssapi contributors, see COPYING for license.
++
++import os
++import time
++
++import requests
++from requests.auth import HTTPBasicAuth
++
++
++if __name__ == '__main__':
++    s = requests.Session()
++    url = 'http://{}/basic_auth_timeout/auth/'.format(
++            os.environ['NSS_WRAPPER_HOSTNAME']
++    )
++    url2 = 'http://{}/basic_auth_timeout/session/'.format(
++            os.environ['NSS_WRAPPER_HOSTNAME']
++    )
++
++    r = s.get(url, auth=HTTPBasicAuth(os.environ['TIMEOUT_USER'],
++                                      os.environ['MAG_USER_PASSWORD']))
++    if r.status_code != 200:
++        raise ValueError('Basic Auth Failed')
++
++    time.sleep(301)
++    r = s.get(url2)
++    if r.status_code != 200:
++        raise ValueError('Session Auth Failed')
++
++    time.sleep(401)
++
++    r = s.get(url2)
++    if r.status_code == 200:
++        raise ValueError('Timeout check Failed')

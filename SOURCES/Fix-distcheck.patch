@@ -1,0 +1,31 @@
+From 706494bde5c5124621006b857fc55529f9e8e0db Mon Sep 17 00:00:00 2001
+From: Simo Sorce <simo@redhat.com>
+Date: Thu, 14 May 2020 18:04:47 -0400
+Subject: [PATCH] Fix distcheck
+
+Signed-off-by: Simo Sorce <simo@redhat.com>
+Reviewed-by: Robbie Harwood <rharwood@redhat.com>
+(cherry picked from commit eb6de7e946d7ecc9292bb454d43ac05f0801adf7)
+---
+ tests/Makefile.am | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/tests/Makefile.am b/tests/Makefile.am
+index 70754fb..16d87e9 100644
+--- a/tests/Makefile.am
++++ b/tests/Makefile.am
+@@ -4,12 +4,14 @@ EXTRA_DIST = \
+ 	401.html \
+ 	httpd.conf \
+ 	index.html \
++	localname.html \
+ 	magtests.py \
+ 	t_bad_acceptor_name.py \
+ 	t_basic_k5_fail_second.py \
+ 	t_basic_k5.py \
+ 	t_basic_k5_two_users.py \
+ 	t_basic_proxy.py \
++	t_localname.py \
+ 	t_hostname_acceptor.py \
+ 	t_nonego.py \
+ 	t_required_name_attr.py \

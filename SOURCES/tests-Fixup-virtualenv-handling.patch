@@ -1,0 +1,87 @@
+From f106e3afa21cdbc098d3c82698585744e3325621 Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Fri, 15 May 2020 15:56:50 -0400
+Subject: [PATCH] [tests] Fixup virtualenv handling
+
+Fixes an issue where virtualenv's PATH would get lost
+
+Signed-off-by: Robbie Harwood <rharwood@redhat.com>
+(cherry picked from commit e60384c0d4d4b4c213ec728ec3d444f998625941)
+---
+ tests/magtests.py | 21 ++++++++++-----------
+ 1 file changed, 10 insertions(+), 11 deletions(-)
+
+diff --git a/tests/magtests.py b/tests/magtests.py
+index 6c38a8f..1c0b26a 100755
+--- a/tests/magtests.py
++++ b/tests/magtests.py
+@@ -67,6 +67,12 @@ def setup_wrappers(base):
+     return wenv
+ 
+ 
++def apply_venv(env):
++    env['PATH'] = os.environ.get('PATH', '')
++    env['VIRTUAL_ENV'] = os.environ.get('VIRTUAL_ENV', '')
++    return env
++
++
+ TESTREALM = "MAG.DEV"
+ KDC_DBNAME = 'db.file'
+ KDC_STASH = 'stash.file'
+@@ -304,7 +310,7 @@ def setup_kdc(testdir, wrapenv):
+     with open(kdcconf, 'w+') as f:
+         f.write(text)
+ 
+-    kdcenv = {'PATH': '/sbin:/bin:/usr/sbin:/usr/bin',
++    kdcenv = {'PATH': f'/sbin:/bin:/usr/sbin:/usr/bin:{wrapenv["PATH"]}',
+               'KRB5_CONFIG': krb5conf,
+               'KRB5_KDC_PROFILE': kdcconf,
+               'KRB5_TRACE': os.path.join(testdir, 'krbtrace.log')}
+@@ -415,7 +421,7 @@ def setup_http(testdir, so_dir, wrapenv):
+ 
+     shutil.copy('tests/401.html', os.path.join(httpdir, 'html'))
+ 
+-    httpenv = {'PATH': '/sbin:/bin:/usr/sbin:/usr/bin',
++    httpenv = {'PATH': f'/sbin:/bin:/usr/sbin:/usr/bin:{wrapenv["PATH"]}',
+                'MALLOC_CHECK_': '3',
+                'MALLOC_PERTURB_': str(random.randint(0, 32767) % 255 + 1)}
+     httpenv.update(wrapenv)
+@@ -712,8 +718,7 @@ def faketime_setup(testenv):
+ 
+ 
+ def http_restart(testdir, so_dir, testenv):
+-
+-    httpenv = {'PATH': '/sbin:/bin:/usr/sbin:/usr/bin',
++    httpenv = {'PATH': f'/sbin:/bin:/usr/sbin:/usr/bin:{testenv["PATH"]}',
+                'MALLOC_CHECK_': '3',
+                'MALLOC_PERTURB_': str(random.randint(0, 32767) % 255 + 1)}
+     httpenv.update(testenv)
+@@ -738,7 +743,7 @@ if __name__ == '__main__':
+     logfile = open(os.path.join(testdir, 'tests.log'), 'w')
+     errs = 0
+     try:
+-        wrapenv = setup_wrappers(testdir)
++        wrapenv = apply_venv(setup_wrappers(testdir))
+ 
+         kdcproc, kdcenv = setup_kdc(testdir, wrapenv)
+         processes['KDC(%d)' % kdcproc.pid] = kdcproc
+@@ -749,10 +754,6 @@ if __name__ == '__main__':
+         keysenv = setup_keys(testdir, kdcenv)
+         testenv = kinit_user(testdir, kdcenv)
+ 
+-        # support virtualenv
+-        testenv['PATH'] = os.environ.get('PATH', '')
+-        testenv['VIRTUAL_ENV'] = os.environ.get('VIRTUAL_ENV', '')
+-
+         testenv['DELEGCCACHE'] = os.path.join(testdir, 'httpd',
+                                               USR_NAME + '@' + TESTREALM)
+         errs += test_spnego_auth(testdir, testenv, logfile)
+@@ -780,8 +781,6 @@ if __name__ == '__main__':
+                    'MAG_USER_NAME_2': USR_NAME_2,
+                    'MAG_USER_PASSWORD_2': USR_PWD_2}
+         testenv.update(kdcenv)
+-        testenv['PATH'] = os.environ.get('PATH', '')
+-        testenv['VIRTUAL_ENV'] = os.environ.get('VIRTUAL_ENV', '')
+ 
+         errs += test_basic_auth_krb5(testdir, testenv, logfile)
+ 

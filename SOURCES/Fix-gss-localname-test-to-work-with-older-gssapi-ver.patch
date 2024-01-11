@@ -1,0 +1,42 @@
+From 2b96860d8cfcf48a54e59e2ca30fc8fdeb2b9d55 Mon Sep 17 00:00:00 2001
+From: rpm-build <rpm-build>
+Date: Fri, 6 May 2022 22:54:45 +0200
+Subject: [PATCH 2/2] 
+ Fix-gss-localname-test-to-work-with-older-gssapi-ver.patch
+
+---
+ tests/t_localname.py | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/tests/t_localname.py b/tests/t_localname.py
+index e990762c42aa9b370ac71292b5019fc63622c240..df94922b52673b5b7fd780ff3f319d22feb348ac 100755
+--- a/tests/t_localname.py
++++ b/tests/t_localname.py
+@@ -45,13 +45,22 @@ if __name__ == '__main__':
+ 
+     mech = None
+     if mech_name is not None:
+-        mech = gssapi.mechs.Mechanism.from_sasl_name(mech_name)
++        try:
++            mech = gssapi.mechs.Mechanism.from_sasl_name(mech_name)
++        except AttributeError:
++            # older version of gssapi that does not support mechs
++            if mech_name == 'SPNEGO':
++                mech = '<Mechanism spnego (1.3.6.1.5.5.2)>'
++            elif mech_name == 'GS2-KRB5':
++                mech = '<Mechanism krb5 (1.2.840.113554.1.2.2)>'
++            else:
++                sys.exit(42) # SKIP
+ 
+     try:
+         auth = HTTPSPNEGOAuth(mech=mech)
+         use_requests(auth)
+     except TypeError:
+-        # odler version of requests that does not support mechs
++        # older version of requests that does not support mechs
+         if mech_name == 'SPNEGO':
+             use_curl()
+         elif mech_name == 'GS2-KRB5':
+-- 
+2.35.3
+
