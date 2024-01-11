@@ -1,0 +1,36 @@
+From 74fd6dc6c3ba65e48c625d4724878721c46a5e6f Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Tue, 24 Aug 2021 15:04:13 -0400
+Subject: [PATCH] crypto: Handle EVP changes in OpenSSL 3
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+OpenSSL 3 changes the padding behavior of EVP_DecryptFinal_ex(), which
+causes our decryption to fail.  It is the opnion of the OpenSSL
+developers that mod_auth_gssapi's use of this function was incorrect.
+
+Patch suggested by Tomáš Mráz.
+
+Related: https://github.com/openssl/openssl/issues/16351
+
+Signed-off-by: Robbie Harwood <rharwood@redhat.com>
+(cherry picked from commit 06d1f7d36d2455747e6e8231d28e6524ea1181f1)
+(cherry picked from commit 915a3d7fca3beefadd751562abe2d481354a2a9c)
+---
+ src/crypto.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/crypto.c b/src/crypto.c
+index 3f372a0..b3f7fd9 100644
+--- a/src/crypto.c
++++ b/src/crypto.c
+@@ -262,7 +262,7 @@ apr_status_t UNSEAL_BUFFER(apr_pool_t *p, struct seal_key *skey,
+ 
+     totlen += outlen;
+     outlen = plain->length - totlen;
+-    ret = EVP_DecryptFinal_ex(ctx, plain->value, &outlen);
++    ret = EVP_DecryptFinal_ex(ctx, plain->value + totlen, &outlen);
+     if (ret == 0) goto done;
+ 
+     totlen += outlen;
